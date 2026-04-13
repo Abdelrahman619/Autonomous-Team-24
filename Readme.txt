@@ -1,66 +1,71 @@
-COURSE: MCTR1002-AUTONOMOUS SYSTEM - TEAM 24
---- PROJECT OVERVIEW ---
-This project involves the development of a car-like autonomous vehicle simulated within the ROS 2 Humble and Gazebo environments. The primary objective is to implement an Ackermann-steered platform capable of precise teleoperation and real-time position feedback.
 
---- VEHICLE ARCHITECTURE & COMPONENTS ---
+# Milestone 02: Autonomous Systems Project (Team 24)
 
-MECHANICAL DESIGN (ACKERMANN STEERING)
-The vehicle mimics real-world automotive kinematics using Ackermann geometry.
+## Project Overview
+This project implements an **Open Loop Response (OLR)** and **Teleoperation** system for an autonomous vehicle. It integrates a ROS 2 Gazebo simulation with physical hardware (Raspberry Pi and Arduino). The architecture is distributed across specialized packages to handle navigation, locomotion, and system-wide orchestration.
 
-Front System: Utilizes a Servo Motor to control the steering angle of the front wheels.
+---
 
-Rear System: Powered by a DC Motor providing longitudinal drive and velocity.
+## Package Structure & Roles
 
-Turning Logic: Ensures all wheels follow a common turning center to prevent tire slip during maneuvers.
+### 1. `Autonomous_Systems_Project_Team_24`
+This is the **Master Orchestration Package**.
+* **Launch Files**: Contains the primary launch file that triggers the entire system (Gazebo, OLR node, Teleop node, and the ROS-GZ Bridge).
+* **Coordination**: It calls the executables located in the `navigation_pkg`.
 
-PERCEPTION SYSTEM
+### 2. `navigation_pkg`
+Contains the core control logic nodes used in this milestone:
+* **`olr_node`**: Executes autonomous movement based on parameters (`desired_speed`, `steering`) and prints real-time states (Pose X/Y, Yaw, Velocity) to the terminal.
+* **`teleop_node`**: Provides manual control capabilities.
 
-Vision-Based: The vehicle is designed to perceive its environment primarily through a Camera-based system.
+### 3. `locomotion_pkg`
+Contains the physical and visual representation of the vehicle:
+* **Dynamics & Kinematics**: Mathematical models defining the car's movement.
+* **Meshes**: 3D visual files and SDF models (`my_car.sdf`) for the Gazebo environment.
 
-CONTROL & COMMUNICATION
+### 4. Future Milestone Files (Neglect for MS2)
+The following files are included for future development and are **not active** for this milestone's assessment:
+* `controller.py` / `planner.py`
+* `serial_bridge_node.py` (The system currently uses the standalone Raspberry Pi bridge script for MS2 hardware communication).
 
-Custom ROS Node: A specialized Python node translates keyboard inputs into speed and steering commands.
+---
 
-Hardware Interface: In the physical build, a Raspberry Pi  communicates with an Arduino via USB Serial.
+## Technical Specifications
 
-Open-Loop Testing: The Arduino manages the motor drivers using fixed PWM signals for hardware validation.
+### Control Logic & Mapping
+The OLR node utilizes ROS 2 parameters to publish `geometry_msgs/Twist` messages. The steering angle for the hardware is calculated as:
+$$servoAngle = 90 + (steering \times 45)$$
+Where `steering` is a normalized value between **-1.0 (Max Right)** and **1.0 (Max Left)**.
 
-FEEDBACK LOOP
+### Communication
+* **Simulation**: `ros_gz_bridge` handles the bidirectional data flow between ROS 2 and Gazebo (Cmd_vel and Pose).
+* **Hardware**: A serial bridge on the Raspberry Pi communicates with the Arduino at **115200 baud**.
 
-Odometry Tracking: The system subscribes to the vehicle's odometry data to monitor real-time (x, y) coordinates.
+---
 
-Validation: This ensures the "Act" command (movement) matches the "Sense" data (location).
+## Execution Instructions
 
---- SYSTEM SETUP (.bashrc Aliases) ---
+### 1. Build the Workspace
+```bash
+cd ~/auto_ws
+colcon build
+source install/setup.bash
+export ROS_DOMAIN_ID=24
+```
 
-alias gazebo: Cleans old processes and starts Gazebo with a forced reset.
+### 2. Launch the System
+Run the master launch file from the orchestration package:
+```bash
+ros2 launch Autonomous_Systems_Project_Team_24 Autonomous_Systems_MS_2_Team_24.launch.py desired_speed:=1.2 steering:=0.5
+```
 
-alias bridge: Establishes the communication link for Twist and Odometry data.
+---
 
-alias move: Clears the ROS daemon and launches the Teleoperation validation node.
+## Hardware Pin Mapping (Arduino)
+* **MG995 Servo**: Digital Pin 9 (PWM)
+* **L298N Motor Driver**: Pins 5, 6 (EN), Pins 7, 8, 12, 13 (IN)
+* **Power**: Common ground established between Arduino, Raspberry Pi, and external battery packs.
 
---- EXECUTION FLOW ---
+---
 
-Start Simulation: Type 'gazebo' in the first terminal.
-
-Link Communication: Type 'bridge' in the second terminal.
-
-Launch Controller: Type 'move' in the third terminal to drive the vehicle.
-
---- VALIDATION NODE LOGIC ---
-
-Control Mapping: W/A/S/D/X keys manage velocity and steering angle parameters.
-
-Performance: Position data is logged at a frequency of 1Hz to maintain terminal clarity.
-
-Safety: An emergency shutdown function stops the vehicle instantly upon exiting (Ctrl+C).
-
-Parameters: The system utilizes 'rosparam' via launch files to define initial and desired speeds.
-
---- HARDWARE CONFIGURATION ---
-
-Microcontrollers: Raspberry Pi for high-level processing; Arduino for low-level motor control.
-
-Motor Drivers: Integrated to handle the power requirements of the DC drive motors.
-
-Chassis Integration: Components are selected for a compact footprint to fit within the vehicle frame.
+> **Note to Evaluator**: The files `controller`, `planner`, and `serial_bridge_node` are preparatory files for Milestone 03 and beyond. For Milestone 02, please refer strictly to the `olr_node` and `teleop_node` within `navigation_pkg`.
