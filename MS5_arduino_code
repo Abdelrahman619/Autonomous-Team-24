@@ -1,0 +1,153 @@
+#include <Servo.h>
+#include "Wire.h"
+#include <MPU6050_light.h>
+
+// --- Pins ---
+const int ENA = 5;       
+const int IN1 = 6;       
+const int IN2 = 7;       
+const int SERVO_PIN = 9; 
+const int ENCODER_A = 2; 
+const int ENCODER_B = 3;
+
+Servo steeringServo;
+MPU6050 mpu(Wire);
+
+// --- Variables ---
+volatile long pulseCount = 0;
+long lastCount = 0;
+unsigned long lastTime = 0;
+
+float v_desired = 0;
+float s_desired = 0;
+
+// Odometry States
+float x_pos = 0.0;
+float y_pos = 0.0;
+
+// --- Calibration Params ---
+// BIG BOSS CORRECTION: 1 meter = 10252 pulses
+const float K_MAP = 13586.0; 
+const float DISTANCE_CORRECTION = 1.0; 
+
+// Speed Controller Params
+float Kp = 0.5;              
+
+void encoderISR() {
+  if (digitalRead(ENCODER_A) == digitalRead(ENCODER_B)) {
+    pulseCount++;
+  } else {
+    pulseCount--;
+  }
+}
+
+void setup() {
+  Serial.begin(115200); 
+  Wire.begin();
+
+  // 1. Setup MPU6050 / HW-290
+  byte status = mpu.begin();
+  if(status != 0) {
+    Serial.println("MPU6050 Connection Failed!");
+    while(1){} 
+  }
+  Serial.println("Calibrating Gyro... DO NOT MOVE!");
+  delay(3000);
+  mpu.calcOffsets(); 
+  Serial.println("Calibration Done!");
+
+  // 2. Setup Motor & Servo
+  steeringServo.attach(SERVO_PIN);
+  pinMode(ENA, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  
+  // 3. Setup Encoder
+  pinMode(ENCODER_A, INPUT_PULLUP);
+  pinMode(ENCODER_B, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_A), encoderISR, CHANGE);
+
+  steeringServo.write(90); 
+}
+
+void loop() {
+  mpu.update(); 
+  
+  unsigned long currentTime = millis();
+  
+  // Control loop at 20Hz (every 50ms)
+  if (currentTime - lastTime >= 50) {
+    long currentCount = pulseCount;
+    long diff = currentCount - lastCount;
+    float dt = (currentTime - lastTime) / 1000.0; 
+    
+    // --- 1. Read Speed ---
+    float signed_PPS = (float)diff / dt;
+    float actualPPS = abs(signed_PPS); 
+    
+    // --- 2. Read Lateral Acceleration (Slip Detection) ---
+    float accY = mpu.getAccY(); 
+    if(abs(accY) < 0.05) accY = 0.0; // Filter small vibration noise
+
+    // --- 3. Calculate Motor Effort ---
+    float targetPPS = abs(v_desired) * K_MAP;
+    float error = targetPPS - actualPPS;
+    float basePWM = abs(v_desired) * 200; 
+    float correction = Kp * error;
+    int finalPWM = constrain(int(basePWM + correction), 0, 255);
+
+    // --- 4. Execute Motor Command ---
+    if (v_desired > 0.05) {
+      digitalWrite(IN1, HIGH);
+      digitalWrite(IN2, LOW);
+      analogWrite(ENA, finalPWM);
+    } else if (v_desired < -0.05) {
+      digitalWrite(IN1, LOW);
+      digitalWrite(IN2, HIGH);
+      analogWrite(ENA, finalPWM);
+    } else {
+      digitalWrite(IN1, LOW);
+      digitalWrite(IN2, LOW);
+      analogWrite(ENA, 0);
+    }
+
+    // --- 5. Read Actual Yaw & Calculate Odometry ---
+    float yaw_deg = mpu.getAngleZ();
+    float yaw_rad = yaw_deg * (PI / 180.0); 
+    
+    float v_d = (signed_PPS / K_MAP) * DISTANCE_CORRECTION; 
+
+    // Euler Approximation
+    float v_x = v_d * cos(yaw_rad);
+    float v_y = v_d * sin(yaw_rad);
+    
+    x_pos = x_pos + (dt * v_x);
+    y_pos = y_pos + (dt * v_y);
+
+    // --- 6. Send Unified Data to ROS (Pi) ---
+    // Added accY as the 5th parameter for slip processing in ROS
+    Serial.print("STATE:"); 
+    Serial.print(signed_PPS);  Serial.print(",");
+    Serial.print(yaw_deg);    Serial.print(",");
+    Serial.print(x_pos, 4);   Serial.print(",");
+    Serial.print(y_pos, 4);   Serial.print(",");
+    Serial.println(accY, 4);
+
+    lastCount = currentCount;
+    lastTime = currentTime;
+  }
+
+  // --- 7. Receive Commands from ROS (Pi) ---
+  if (Serial.available() > 0) {
+    String data = Serial.readStringUntil('\n');
+    int commaIndex = data.indexOf(',');
+    if (commaIndex != -1) {
+      v_desired = data.substring(0, commaIndex).toFloat();
+      s_desired = data.substring(commaIndex + 1).toFloat();
+
+      // Mapping steering commands to servo angles
+      int servoAngle = 90 + (-s_desired * 45); 
+      steeringServo.write(constrain(servoAngle, 45, 135));
+    }
+  }
+}
